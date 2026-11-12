@@ -1,0 +1,42 @@
+{
+  "name": "@aegisforge/flowd",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AegisForge workflow daemon: soft-workflow engine (vendored from dsh-workflow-lite, MIT) + Claude Agent SDK runner + Fastify HTTP surface",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "lib/index.mjs",
+  "tsdown": {
+    "outDir": "lib"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "node --watch lib/index.mjs",
+    "start": "node lib/index.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@fastify/cors": "^11.4.1",
+    "@xyflow/react": "^12.3.5",
+    "elkjs": "^0.9.3",
+    "fastify": "^5.2.0",
+    "fflate": "^0.8.3",
+    "markdown-it": "^15.0.2",
+    "markdown-it-cjk-friendly": "^3.0.0",
+    "pathe": "^2.0.3",
+    "yaml": "^2.9.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
+    "@types/node": "^22.19.0",
+    "tsdown": "^0.22.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
