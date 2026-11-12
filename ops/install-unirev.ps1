@@ -75,9 +75,12 @@ $ca = @("$env:USERPROFILE\tools\craft-anything-bin\craft-anything-cli.exe",
 if ($ca) { Note 'OK' "craft-anything-cli found: $ca" }
 else { Note 'WARN' 'craft-anything-cli not found; download from https://github.com/storytold/craft-anything/releases' }
 
-# 5) uv (reverse_lab_tools runtime).
-$uv = Get-Command uv -ErrorAction SilentlyContinue
-if ($uv) { Note 'OK' 'uv found' } else { Note 'WARN' 'uv not found; reverse_lab_tools MCP unavailable' }
+# 5) uv (reverse_lab_tools runtime). Falls back to the winget package dir because
+#    a process spawned from an older shell inherits the stale PATH.
+$uv = @((Get-Command uv -ErrorAction SilentlyContinue).Source,
+  "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\uv.exe") |
+  Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+if ($uv) { Note 'OK' "uv found: $uv" } else { Note 'WARN' 'uv not found; reverse_lab_tools MCP unavailable' }
 
 # 6) reverse_lab_tools MCP registration — idempotent, with one-time .bak snapshot.
 # Raw-text probe: PS 5.1's ConvertFrom-Json rejects ~/.claude.json's duplicate keys.
@@ -95,10 +98,11 @@ if ($mutating -and $uv -and (Test-Path $claudeJson)) {
     }
     $mcpDir = Join-Path $unirev 'vendors/open-reverselab/tools/skills/mcp/ReverseLabToolsMCP'
     if (Test-Path "$mcpDir/reverse_lab_tools_mcp.py") {
-      $mcpJson = @{ type = 'stdio'; command = 'uv'; args = @('run', '--project', $mcpDir, '--python', '>=3.11', 'python', "$mcpDir/reverse_lab_tools_mcp.py") } | ConvertTo-Json -Compress
-      & claude mcp add-json --scope user reverse_lab_tools $mcpJson
+      # `claude mcp add ... --` form instead of add-json: PS 5.1 mangles quoted JSON args.
+      $mcpDirFwd = $mcpDir -replace '\\', '/'
+      & claude mcp add --scope user reverse_lab_tools -- uv run --project $mcpDirFwd --python '>=3.11' python "$mcpDirFwd/reverse_lab_tools_mcp.py"
       if ($LASTEXITCODE -eq 0) { Note 'OK' 'reverse_lab_tools registered (restart Claude Code to load)' }
-      else { Note 'FAIL' 'claude mcp add-json failed' }
+      else { Note 'FAIL' 'claude mcp add failed' }
     } else { Note 'FAIL' "MCP entry not found: $mcpDir/reverse_lab_tools_mcp.py" }
   }
 } elseif ($mutating -and -not $uv) {
@@ -109,6 +113,50 @@ if ($mutating -and $uv -and (Test-Path $claudeJson)) {
   Note 'OK' 'reverse_lab_tools registered'
 } else {
   Note 'INFO' 'reverse_lab_tools not registered (doctor mode, no changes)'
+}
+
+# 6b) rea MCP registration (idempotent; `rea mcp` serves the tool catalog over stdio).
+$reaRegistered = $false
+if (Test-Path $claudeJson) {
+  if ((Get-Content $claudeJson -Raw) -match '"rea"\s*:') { $reaRegistered = $true }
+}
+if ($mutating -and $rea) {
+  if ($reaRegistered) { Note 'OK' 'rea already registered (idempotent skip)' }
+  else {
+    $npmRoot = (& npm root -g).Trim()
+    $reaMjs = (Join-Path $npmRoot 'rea-agents/scripts/rea.mjs') -replace '\\', '/'
+    if (Test-Path $reaMjs) {
+      & claude mcp add --scope user rea -- node $reaMjs mcp
+      if ($LASTEXITCODE -eq 0) { Note 'OK' 'rea registered (restart Claude Code to load)' }
+      else { Note 'FAIL' 'claude mcp add rea failed' }
+    } else { Note 'FAIL' "rea.mjs not found at $reaMjs" }
+  }
+} elseif ($mutating -and -not $rea) {
+  Note 'WARN' 'rea registration skipped: rea-agents not installed'
+} elseif ($reaRegistered) {
+  Note 'OK' 'rea registered'
+} else {
+  Note 'INFO' 'rea not registered (doctor mode, no changes)'
+}
+
+# 6c) craft-anything MCP registration (idempotent).
+$caRegistered = $false
+if (Test-Path $claudeJson) {
+  if ((Get-Content $claudeJson -Raw) -match '"craft-anything"\s*:') { $caRegistered = $true }
+}
+if ($mutating -and $ca) {
+  if ($caRegistered) { Note 'OK' 'craft-anything already registered (idempotent skip)' }
+  else {
+    & claude mcp add --scope user craft-anything -- $ca mcp
+    if ($LASTEXITCODE -eq 0) { Note 'OK' 'craft-anything registered (restart Claude Code to load)' }
+    else { Note 'FAIL' 'claude mcp add craft-anything failed' }
+  }
+} elseif ($mutating -and -not $ca) {
+  Note 'WARN' 'craft-anything registration skipped: CLI not found'
+} elseif ($caRegistered) {
+  Note 'OK' 'craft-anything registered'
+} else {
+  Note 'INFO' 'craft-anything not registered (doctor mode, no changes)'
 }
 
 # 7) Health check: CA doctor when available.
