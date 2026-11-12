@@ -18,6 +18,7 @@ import type {
   AssetInterceptRuleInput,
   TaskCredential,
   TaskCredentialInput,
+  WorkflowRunRow,
   Audit,
   BatchCategoryItem,
   BatchControlItem,
@@ -1290,6 +1291,16 @@ export const api = {
     sp.set("page", String(params?.page ?? 0));
     sp.set("size", String(params?.size ?? 50));
     return get<{ commands: CommandRecord[]; total: number }>(`/commands?${sp}`);
+  },
+
+  // ---- workflow runs (unified runs view; mirrored rows in PostgreSQL) ----
+  workflowRuns: (params?: { runtime?: string; status?: string; page?: number; size?: number }) => {
+    const sp = new URLSearchParams();
+    if (params?.runtime) sp.set("runtime", params.runtime);
+    if (params?.status) sp.set("status", params.status);
+    sp.set("page", String(params?.page ?? 0));
+    sp.set("size", String(params?.size ?? 50));
+    return get<{ runs: WorkflowRunRow[]; total: number }>(`/workflow-runs?${sp}`);
   },
   // Per-tool call counts; reuses the list's task/q filters and stats the whole result set, not the current page.
   commandStats: (params?: { task?: string; q?: string }) => {

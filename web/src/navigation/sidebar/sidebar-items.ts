@@ -10,6 +10,7 @@ import {
   FolderSync,
   Gauge,
   GitBranch,
+  History,
   LayoutDashboard,
   type LucideIcon,
   MessageSquare,
@@ -79,6 +80,7 @@ export const sidebarItems: NavGroup[] = [
       { id: "sync", title: "Asset Sync", url: "/function/sync", icon: FolderSync },
       { id: "workspace", title: "Workspace", url: "/function/workspace", icon: FolderOpen },
       { id: "workflow", title: "工作流", url: "/function/workflow", icon: GitBranch },
+      { id: "runs", title: "运行记录", url: "/function/runs", icon: History },
     ],
   },
   {

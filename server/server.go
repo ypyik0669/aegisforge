@@ -707,6 +707,8 @@ func (s *Server) Handler() http.Handler {
 
 	// AegisForge: flowd run-terminal mirror (X-Mirror-Token auth, not JWT)
 	mux.HandleFunc("POST /api/mirror/workflow-runs", s.handleWorkflowRunMirror)
+	// AegisForge: unified runs view reads the mirror from PostgreSQL (JWT-protected)
+	mux.HandleFunc("GET /api/workflow-runs", s.handleWorkflowRunList)
 
 	// Auth routes — exempt from JWT check (handled in requireAuth)
 	mux.HandleFunc("GET /api/auth/status", s.authStatus)

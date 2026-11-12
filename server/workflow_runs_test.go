@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -131,4 +132,104 @@ func newNoPGManager() *Manager {
 	m := &Manager{}
 	m.pg = nil
 	return m
+}
+
+// List endpoint roundtrip (skipped without a test PostgreSQL): seed two runs,
+// verify default ordering, filters and pagination.
+func TestWorkflowRunList(t *testing.T) {
+	dsn, _, err := db.DSN()
+	if err != nil {
+		t.Skip("test postgres not configured")
+	}
+	pg, err := db.Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.Close()
+	t.Setenv("ARTEX_MIRROR_TOKEN", "t")
+	ctx := context.Background()
+	cleanup := func() {
+		_, _ = pg.Exec(`DELETE FROM workflow_runs WHERE id IN ('mir-list-1','mir-list-2')`)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	seed := []db.WorkflowRunMirror{
+		{ID: "mir-list-1", WorkflowID: "wf-a", WorkflowName: "e2e-hello", Runtime: "sdk", Status: "done",
+			StartedAt: "2026-11-13T08:00:00Z", UpdatedAt: "2026-11-13T08:05:00Z"},
+		{ID: "mir-list-2", WorkflowID: "wf-b", WorkflowName: "go-loop", Runtime: "go", Status: "failed",
+			StartedAt: "2026-11-13T09:00:00Z", UpdatedAt: "2026-11-13T09:01:00Z"},
+	}
+	for _, m := range seed {
+		if err := pg.UpsertWorkflowRun(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := &Server{m: newNoPGManager()}
+	s.m.pg = pg
+	get := func(query string) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/workflow-runs"+query, nil)
+		w := httptest.NewRecorder()
+		s.handleWorkflowRunList(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	// Unfiltered: both rows, newest first.
+	out := get("")
+	if got := int(out["total"].(float64)); got < 2 {
+		t.Fatalf("total=%d, want >=2", got)
+	}
+	first := out["runs"].([]any)[0].(map[string]any)
+	if first["id"] != "mir-list-2" {
+		t.Fatalf("newest-first violated: first=%v", first["id"])
+	}
+
+	// runtime=go filter keeps only the go row.
+	out = get("?runtime=go")
+	rows := out["runs"].([]any)
+	if len(rows) != 1 || rows[0].(map[string]any)["runtime"] != "go" {
+		t.Fatalf("runtime filter: %v", rows)
+	}
+
+	// status filter + pagination: size=1 page=0 → exactly one row.
+	out = get("?status=done&size=1")
+	if n := len(out["runs"].([]any)); n != 1 {
+		t.Fatalf("paged rows=%d, want 1", n)
+	}
+
+	// Full JSON ingest path (flowd's snake_case payload must decode into the
+	// tagged struct — a missing json tag silently zeroes updated_at, losing
+	// finished_at). Seed a third row through the real handler.
+	if code, body := func() (int, string) {
+		req := httptest.NewRequest(http.MethodPost, "/api/mirror/workflow-runs",
+			bytes.NewBufferString(`{"id":"mir-list-3","runtime":"sdk","status":"done","model_profile":"deepseek-chat","workflow_id":"wf-c","workflow_name":"e2e","started_at":"2026-11-13T10:00:00Z","updated_at":"2026-11-13T10:02:00Z"}`))
+		req.Header.Set("X-Mirror-Token", "t")
+		w := httptest.NewRecorder()
+		s.handleWorkflowRunMirror(w, req)
+		return w.Code, w.Body.String()
+	}(); code != http.StatusAccepted {
+		t.Fatalf("mirror POST status=%d body=%s", code, body)
+	}
+	t.Cleanup(func() { _, _ = pg.Exec(`DELETE FROM workflow_runs WHERE id='mir-list-3'`) })
+	var finished *time.Time
+	var model string
+	if err := pg.QueryRow(`SELECT finished_at, COALESCE(model_profile,'') FROM workflow_runs WHERE id='mir-list-3'`).
+		Scan(&finished, &model); err != nil {
+		t.Fatal(err)
+	}
+	if finished == nil {
+		t.Fatal("finished_at NULL: WorkflowRunMirror json tags missing?")
+	}
+	if model != "deepseek-chat" {
+		t.Fatalf("model_profile=%q (json decode broken)", model)
+	}
 }

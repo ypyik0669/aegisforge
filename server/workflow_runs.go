@@ -60,3 +60,25 @@ func (s *Server) handleWorkflowRunMirror(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "id": payload.ID})
 }
+
+// handleWorkflowRunList serves GET /api/workflow-runs — the unified runs view
+// reads mirrored run rows from PostgreSQL (operator JWT, unlike the mirror POST).
+func (s *Server) handleWorkflowRunList(w http.ResponseWriter, r *http.Request) {
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	q := r.URL.Query()
+	page := atoiDefault(q.Get("page"), 0)
+	size := atoiDefault(q.Get("size"), 50)
+	runtime := q.Get("runtime")
+	status := q.Get("status")
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	runs, total, err := pg.ListWorkflowRuns(ctx, runtime, status, page, size)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs, "total": total})
+}

@@ -46,11 +46,13 @@ export interface MirrorSender {
   send(info: RunInfo, workflow?: { id: string; name?: string }): Promise<boolean>
 }
 
-/** 造一个镜像发送端；url 未配 → 永远 no-op false。 */
+/** 造一个镜像发送端；url 未配 → 永远 no-op false。AF_MIRROR_TOKEN 配了就带上
+ * （Go 基座 fail-closed：没 token 一律 401）。 */
 export function createMirrorSender(
   url: string | undefined,
   fetchImpl: typeof fetch = fetch,
   log: (line: string) => void = () => {},
+  token: string | undefined = process.env.AF_MIRROR_TOKEN,
 ): MirrorSender {
   if (url === undefined || url === '') {
     return { send: async () => false }
@@ -61,7 +63,10 @@ export function createMirrorSender(
       try {
         const response = await fetchImpl(url, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            ...(token === undefined || token === '' ? {} : { 'x-mirror-token': token }),
+          },
           body: JSON.stringify(toMirror(info, workflow)),
         })
         if (!response.ok) {

@@ -1457,6 +1457,31 @@ export interface ToolStat {
   errors: number;
 }
 
+// One mirrored workflow run (GET /workflow-runs; workflow_runs table row).
+export interface WorkflowRunRow {
+  id: string;
+  workflow_id: string;
+  workflow_name: string;
+  runtime: "go" | "sdk";
+  status: "running" | "done" | "failed" | "stopped";
+  model_profile: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+// Live run row from flowd GET /api/runs (subset of RunInfo the runs view uses).
+export interface FlowdRunRow {
+  id: string;
+  sessionId: string;
+  status: "starting" | "running" | "done" | "failed" | "stopped";
+  model: string;
+  prompt: string;
+  cwd: string;
+  startedAt: string;
+  updatedAt: string;
+  turns: number;
+}
+
 // ---- LLM recording ----
 export interface LLMRecordItem {
   id: number;

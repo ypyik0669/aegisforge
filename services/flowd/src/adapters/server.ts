@@ -166,6 +166,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FlowdSer
     fetch,
     (line) => context.logger.info(line),
   )
+  // 工作流绑定：workflowId 路径 spawn 时记住 runId → 图（终态镜像要带 workflow
+  // 上下文，PG workflow_runs 的 workflow_id/name 才不为空）。终态后即清。
+  const workflowBindings = new Map<string, { id: string; name: string }>()
   runnerConfig.onTerminal = (info) => {
     if (Object.values(notifyChannels).some((value) => value !== undefined)) {
       void sendRunNotice(notifyChannels, info).then((results) => {
@@ -173,7 +176,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FlowdSer
         if (failed.length > 0) context.logger.warn(`[flowd] notify failures: ${failed.join('; ')}`)
       })
     }
-    void mirror.send(info)
+    const bound = workflowBindings.get(info.id)
+    void mirror.send(info, bound)
+    if (bound !== undefined) workflowBindings.delete(info.id)
   }
 
   const runner = createRunner({
@@ -291,6 +296,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FlowdSer
       instanceId = started.result.instance.id
       planId = started.result.instance.planId
       fullPrompt = prompt === undefined ? started.result.prompt : `${started.result.prompt}\n\n${prompt}`
+      workflowBindings.set(bindId, { id: workflowId, name: load.name })
     }
 
     // 每个 SDK 会话挂一个绑定会话 id 的 workflow_lite MCP 工具。

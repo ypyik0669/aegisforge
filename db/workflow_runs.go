@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // WorkflowRunMirror is one row for the workflow_runs table (schema.sql).
@@ -10,14 +11,14 @@ import (
 // terminal states so the unified runs view and the Go gateway can query runs
 // without calling flowd. Writes are async best-effort — eventual consistency.
 type WorkflowRunMirror struct {
-	ID           string
-	WorkflowID   string
-	WorkflowName string
-	Runtime      string // 'go' | 'sdk'
-	Status       string // 'running' | 'done' | 'failed' | 'stopped'
-	ModelProfile string
-	StartedAt    string // RFC3339; parsed by PostgreSQL, "" → now()
-	UpdatedAt    string // RFC3339; stamped as finished_at on terminal status
+	ID           string `json:"id"`
+	WorkflowID   string `json:"workflow_id"`
+	WorkflowName string `json:"workflow_name"`
+	Runtime      string `json:"runtime"` // 'go' | 'sdk'
+	Status       string `json:"status"`  // 'running' | 'done' | 'failed' | 'stopped'
+	ModelProfile string `json:"model_profile"`
+	StartedAt    string `json:"started_at"` // RFC3339; parsed by PostgreSQL, "" → now()
+	UpdatedAt    string `json:"updated_at"` // RFC3339; stamped as finished_at on terminal status
 }
 
 // UpsertWorkflowRun mirrors one workflow run row, idempotent on re-send.
@@ -52,4 +53,72 @@ ON CONFLICT (id) DO UPDATE SET
 	_, err := db.ExecContext(ctx, query, run.ID, run.WorkflowID, run.WorkflowName,
 		run.Runtime, run.Status, run.ModelProfile, run.StartedAt, run.UpdatedAt)
 	return err
+}
+
+// WorkflowRunRow is one mirrored run as returned by the list query — the shape
+// the unified runs view renders (timestamps come straight from PostgreSQL).
+type WorkflowRunRow struct {
+	ID           string     `json:"id"`
+	WorkflowID   string     `json:"workflow_id"`
+	WorkflowName string     `json:"workflow_name"`
+	Runtime      string     `json:"runtime"`
+	Status       string     `json:"status"`
+	ModelProfile string     `json:"model_profile"`
+	StartedAt    *time.Time `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at"`
+}
+
+// ListWorkflowRuns returns mirrored run rows, newest first, with optional
+// runtime ('go'|'sdk') and status filters plus pagination. Total is the
+// filtered count, not the page size.
+func (db *DB) ListWorkflowRuns(ctx context.Context, runtime, status string, page, size int) ([]WorkflowRunRow, int, error) {
+	if size <= 0 {
+		size = 50
+	}
+	if page < 0 {
+		page = 0
+	}
+	where := " WHERE true"
+	args := []any{}
+	argN := 1
+	if runtime != "" {
+		where += fmt.Sprintf(" AND runtime = $%d", argN)
+		args = append(args, runtime)
+		argN++
+	}
+	if status != "" {
+		where += fmt.Sprintf(" AND status = $%d", argN)
+		args = append(args, status)
+		argN++
+	}
+
+	var total int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM workflow_runs"+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	dataQ := `
+SELECT id, COALESCE(workflow_id,''), COALESCE(workflow_name,''), runtime, status,
+       COALESCE(model_profile,''), started_at, finished_at
+FROM workflow_runs` + where + `
+ORDER BY started_at DESC
+LIMIT $` + fmt.Sprintf("%d", argN) + ` OFFSET $` + fmt.Sprintf("%d", argN+1)
+	args = append(args, size, page*size)
+
+	rows, err := db.QueryContext(ctx, dataQ, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := []WorkflowRunRow{}
+	for rows.Next() {
+		var row WorkflowRunRow
+		if err := rows.Scan(&row.ID, &row.WorkflowID, &row.WorkflowName, &row.Runtime,
+			&row.Status, &row.ModelProfile, &row.StartedAt, &row.FinishedAt); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, row)
+	}
+	return out, total, rows.Err()
 }
